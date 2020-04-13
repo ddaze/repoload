@@ -8,12 +8,16 @@
 Query gerrit and download a selected CR or crossrepo topic with repo.
 """
 
+from datetime import datetime
+from enum import Enum
+from textwrap import TextWrapper, indent
+from typing import Sequence, Union
 import argparse
 import configparser
-import subprocess
-import sys
 import json
 import os
+import subprocess
+import sys
 
 __VERSION__ = "0.2"
 
@@ -22,6 +26,13 @@ __VERSION__ = "0.2"
 DEBUG = False
 
 MANIFEST_REPO_CFG = '.repo/manifests.git/config'
+
+class GerritOptions(Enum):
+    CurrentPatchSet = "--current-patch-set"
+    Comments = "--comments"
+    CommitMessage = "--commit-message"
+    AllReviewers = "--all-reviewers"
+    PatchSets = "--patch-sets"
 
 
 def fatal(msg):
@@ -74,9 +85,15 @@ URL = get_gerrit_url()
 #   https://gerrit-review.googlesource.com/Documentation/cmd-query.html
 #   https://gerrit-review.googlesource.com/Documentation/user-search.html
 #   https://gerrit-review.googlesource.com/Documentation/json.html
-def query(url, query):
-    # TODO Make port configurable
-    cmd = "ssh -p 29418 {} gerrit query --format=JSON '{}'".format(url, query)
+def query(url: str, query: str, port: int = 29418,
+          options: Union[None, GerritOptions, Sequence[GerritOptions]] = None):
+    opt = ""
+    if isinstance(options, list):
+        opt = " ".join([o.value for o in options])
+    elif isinstance(options, GerritOptions):
+        opt = options.value
+
+    cmd = "ssh -p {port} {url} gerrit query --format=JSON {options} '{query}'".format(port=port, url=url, options=opt, query=query)
     p = subprocess.Popen(cmd.split(), stdout=subprocess.PIPE)
     stdout, _ = p.communicate()
     if p.returncode != 0:
@@ -119,7 +136,7 @@ def print_open_changes(args):
             topic_str = " [topic: %s]" % (topic,)
         else:
             topic_str = ""
-        print("%d: %s (%s)%s" % (cr.get('number'), cr.get('subject'), author, topic_str))
+        print("%d %s (%s)%s" % (cr.get('number'), cr.get('subject'), author, topic_str))
     return 0
 
 
@@ -151,11 +168,82 @@ def get_changes_for_topic(topic):
     return changes
 
 
-def get_change(number):
-    changes, _ = query(URL, "%s" % (number,))
+def get_change(number, options=None):
+    changes, _ = query(URL, "%s" % (number,), options=options)
     if len(changes) != 1:
         raise Exception("Cannot find change for id %s" % (number,))
     return changes[0]
+
+
+def show_change(args):
+    # Show information about a change id
+    number = args.value
+    change = get_change(number, options=[GerritOptions.CommitMessage,
+                                         GerritOptions.CurrentPatchSet,
+                                         GerritOptions.PatchSets,
+                                         GerritOptions.Comments])
+    print_change(change)
+
+
+def print_change(change):
+    w = TextWrapper(width=72, initial_indent="\t", subsequent_indent="\t")
+    c = change
+    print("Project:\t{} @ {} ".format(c["project"], c["branch"]))
+    print("Status:\t\t{}".format(c["status"]))
+    if c["open"] == "true":
+        print("Cr is open")
+
+    print("Change id:\t{}".format(c["id"]))
+    print("Change number:\t{}".format(c["number"]))
+
+    print("Created at\t{}".format(datetime.fromtimestamp(c["createdOn"])))
+    print("Last updated\t{}".format(datetime.fromtimestamp(c["lastUpdated"])))
+    print("Url\t\t{}".format(c["url"]))
+
+    print("Change subject:\t{}".format(c["subject"]))
+    print("Change owner:\t{} ({})".format(c["owner"]["name"], c["owner"]["email"]))
+
+    print('\nCommit Message:\n')
+    for line in str.splitlines(c["commitMessage"]):
+        print(w.fill(line))
+
+    print('\n')
+    p = c["currentPatchSet"]
+    print("PatchSet\t{}:".format(p['number']))
+    print("Kind\t\t{}".format(p['kind']))
+    print("Ref\t\t{}".format(p['ref']))
+    print("Revision\t{}".format(p["revision"]))
+
+    parents = " \n".join(p["parents"])
+    print("Parents\t\t{}".format(parents))
+    print("Created\t\t{}".format(datetime.fromtimestamp(p["createdOn"])))
+
+    print("Size\t\t+{} / -{}".format(p["sizeInsertions"], p["sizeDeletions"]))
+
+    if 'approvals' in p:
+        print("Approved by:")
+        for approval in p['approvals']:
+            print("    {} : {} [{}]".format(approval['value'],
+                                            approval['by']['name'],
+                                            approval['description']))
+
+    # TODO: Also show the comments on files
+    print('\n')
+    print('Comments:')
+    w.initial_indent = "\t> "
+    w.subsequent_indent = "\t> "
+    w.break_long_words = False
+    w.break_on_hyphens = False
+    # Access list in reverse order to have the newest items first.
+    for comment in reversed(c['comments']):
+        print("    {} - {}".format(comment['reviewer']['name'],
+                                   datetime.fromtimestamp(
+                                       comment["timestamp"])))
+
+        for line in str.splitlines(comment["message"]):
+            if line.strip() != "":
+                print(w.fill(line))
+        print('')
 
 
 def download(args):
@@ -219,14 +307,20 @@ def main():
     subparsers = parser.add_subparsers()
 
     parser_crs = subparsers.add_parser("changes",
-                                       help="List all Change Requests.",
+                                       help="List all open Change Requests.",
                                        aliases=["c"])
     parser_crs.set_defaults(func=print_open_changes)
 
     parser_topics = subparsers.add_parser("topics",
-                                       help="List all topics.",
+                                       help="List all open topics.",
                                        aliases=["t"])
     parser_topics.set_defaults(func=print_open_topics)
+
+    parser_show = subparsers.add_parser("show",
+                                        help="Show a single Change (number) request.",
+                                        aliases=["s"])
+    parser_show.set_defaults(func=show_change)
+    parser_show.add_argument("value", help="Change ID")
 
     # TODO Add argument to disable autodetection
     parser_download = subparsers.add_parser("download",

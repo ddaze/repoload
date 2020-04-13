@@ -14,6 +14,7 @@ The full feature list is:
 
 * Query gerrit for open CRs
 * Query gerrit for open topic names
+* Show information about a CR
 * Download a CR or multiple CRs linked by a topic at once.
 
 It also works with gerrit using the [autosubmitter plugin][autosubmit].
@@ -44,8 +45,8 @@ Example:
      # Query the gerrit server for open CRs
      # You can use `grep` to filter for your coworker's CRs
      $ repoload changes | grep -i john
-     123: Add feature A (John Doe <john.doe@my.corp.com>) [topic: crossrepo/feature-a]
-     128: Update library for feature A (John Doe <john.doe@my.corp.com>) [topic: crossrepo/feature-a]
+     123 Add feature A (John Doe <john.doe@my.corp.com>) [topic: crossrepo/feature-a]
+     128 Update library for feature A (John Doe <john.doe@my.corp.com>) [topic: crossrepo/feature-a]
      [...]
 
      # For downloading all CRs linked by a topic, just use the topic name
@@ -60,6 +61,7 @@ All `repoload` commands have an abbreviation:
 
      $ repoload c     # for 'changes'
      $ repoload t     # for 'topics'
+     $ repoload s     # for 'show'
      $ repoload d     # for 'download'
 
 
@@ -126,6 +128,16 @@ cannot be printed to the terminal, if the locale is non-UTF8. The current workar
 is to *not* use repoload with non-UTF8 character sets.
 
 It's planned to fix this issue in the next version of repoload.
+
+### Interactive change view with fzf
+
+With fzf (A command-line fuzzy finder) it's easy to build a simple CR viewer.
+To browse all open CR's load them with `repoload changes` and use fzf's preview
+function to call `repoload show` for the selected CR.
+
+Install fzf: https://github.com/junegunn/fzf
+
+    $ repoload changes | fzf --preview="repoload show {1}"
 
 
 ## License
